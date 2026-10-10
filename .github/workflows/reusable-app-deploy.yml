@@ -1,0 +1,159 @@
+# ---------------------------------------------------------------------------
+# Workflow: Reusable Application Deployment
+# Called by app-cd.yml for each environment stage.
+# Downloads the immutable zip, archives it, deploys, and verifies.
+# ---------------------------------------------------------------------------
+
+name: Reusable Application Deployment
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+        description: 'GitHub Environment name (development, testing, production)'
+      artifactRunId:
+        required: true
+        type: string
+        description: 'Workflow run ID of the CI run that produced the artifact'
+      commitSha:
+        required: true
+        type: string
+        description: 'Git commit SHA to verify after deployment'
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+jobs:
+  deploy:
+    name: Deploy — ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: app-${{ inputs.environment }}
+      cancel-in-progress: false
+
+    steps:
+      # ------------------------------------------------------------------
+      # Download artifact from the CI workflow run
+      # ------------------------------------------------------------------
+      - name: Download deployment package
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-package
+          run-id: ${{ inputs.artifactRunId }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify package exists
+        run: |
+          PACKAGE="pjmcore-func-${{ inputs.commitSha }}.zip"
+          if [ ! -f "$PACKAGE" ]; then
+            echo "::error::Deployment package '$PACKAGE' not found"
+            ls -la
+            exit 1
+          fi
+          echo "✓ Package found: $PACKAGE ($(du -h "$PACKAGE" | cut -f1))"
+
+      # ------------------------------------------------------------------
+      # Authenticate to Azure
+      # ------------------------------------------------------------------
+      - name: Authenticate to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # ------------------------------------------------------------------
+      # Archive package in blob storage (versioned backup for rollback)
+      # ------------------------------------------------------------------
+      - name: Upload package to deployment container
+        run: |
+          az storage blob upload \
+            --account-name "${{ vars.AZURE_STORAGE_ACCOUNT_NAME }}" \
+            --container-name deploymentpackage \
+            --name "pjmcore-func-${{ inputs.commitSha }}.zip" \
+            --file "./pjmcore-func-${{ inputs.commitSha }}.zip" \
+            --auth-mode login \
+            --overwrite
+
+          echo "✓ Package archived in deploymentpackage container"
+
+      # ------------------------------------------------------------------
+      # Deploy to Function App
+      # ------------------------------------------------------------------
+      - name: Deploy to Function App
+        run: |
+          az functionapp deploy \
+            --name "${{ vars.AZURE_FUNCTIONAPP_NAME }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP_NAME }}" \
+            --src-path "./pjmcore-func-${{ inputs.commitSha }}.zip" \
+            --type zip \
+            --clean false \
+            --restart true
+
+          echo "✓ Deployment initiated for ${{ vars.AZURE_FUNCTIONAPP_NAME }}"
+
+      # ------------------------------------------------------------------
+      # Verify deployment — health check
+      # ------------------------------------------------------------------
+      - name: Verify health endpoint
+        run: |
+          URL="https://${{ vars.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net/api/health"
+          MAX_RETRIES=12
+          RETRY_INTERVAL=15
+
+          echo "Waiting for $URL to return healthy..."
+
+          for i in $(seq 1 $MAX_RETRIES); do
+            HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" "$URL" 2>/dev/null || echo "000")
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✓ Health check passed (attempt $i/$MAX_RETRIES)"
+              cat response.json | jq .
+              break
+            fi
+
+            if [ "$i" -eq "$MAX_RETRIES" ]; then
+              echo "::error::Health check failed after $MAX_RETRIES attempts (last HTTP code: $HTTP_CODE)"
+              [ -f response.json ] && cat response.json
+              exit 1
+            fi
+
+            echo "  Attempt $i/$MAX_RETRIES: HTTP $HTTP_CODE — retrying in ${RETRY_INTERVAL}s..."
+            sleep $RETRY_INTERVAL
+          done
+
+      # ------------------------------------------------------------------
+      # Verify deployment — version match
+      # ------------------------------------------------------------------
+      - name: Verify version endpoint
+        run: |
+          URL="https://${{ vars.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net/api/version"
+          MAX_RETRIES=6
+          RETRY_INTERVAL=10
+          EXPECTED_SHA="${{ inputs.commitSha }}"
+
+          echo "Verifying deployed version contains commit SHA: $EXPECTED_SHA"
+
+          for i in $(seq 1 $MAX_RETRIES); do
+            VERSION=$(curl -s "$URL" 2>/dev/null | jq -r '.version // empty' || echo "")
+
+            if echo "$VERSION" | grep -q "$EXPECTED_SHA"; then
+              echo "✓ Version verified: $VERSION"
+              exit 0
+            fi
+
+            if [ "$i" -eq "$MAX_RETRIES" ]; then
+              echo "::error::Version mismatch after $MAX_RETRIES attempts"
+              echo "  Expected SHA: $EXPECTED_SHA"
+              echo "  Got version:  $VERSION"
+              exit 1
+            fi
+
+            echo "  Attempt $i/$MAX_RETRIES: version '$VERSION' — retrying in ${RETRY_INTERVAL}s..."
+            sleep $RETRY_INTERVAL
+          done

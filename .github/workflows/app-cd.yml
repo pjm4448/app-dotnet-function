@@ -1,0 +1,100 @@
+# ---------------------------------------------------------------------------
+# Workflow: Deploy Application
+# Triggered on successful CI completion or manual dispatch (rollback).
+# Promotes the immutable deployment package through dev → test → prod.
+# ---------------------------------------------------------------------------
+
+name: Deploy Application
+
+on:
+  # Automatic: triggered when Application CI completes on main
+  workflow_run:
+    workflows: ["Application CI"]
+    branches: [main]
+    types: [completed]
+
+  # Manual: triggered for rollback or redeployment
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: 'CI workflow run ID (find in Actions tab → Application CI → run number)'
+        required: true
+        type: string
+      commit_sha:
+        description: 'Git commit SHA to deploy and verify'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+jobs:
+
+  # =========================================================================
+  # Resolve: determine the source CI run and commit SHA
+  # Handles both workflow_run (automatic) and workflow_dispatch (manual)
+  # =========================================================================
+  resolve:
+    name: Resolve Deployment Source
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    outputs:
+      artifact-run-id: ${{ steps.set-params.outputs.run-id }}
+      commit-sha: ${{ steps.set-params.outputs.sha }}
+
+    steps:
+      - name: Determine source parameters
+        id: set-params
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "run-id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+            echo "Source: CI workflow run #${{ github.event.workflow_run.id }}"
+            echo "Commit: ${{ github.event.workflow_run.head_sha }}"
+          else
+            echo "run-id=${{ inputs.ci_run_id }}" >> "$GITHUB_OUTPUT"
+            echo "sha=${{ inputs.commit_sha }}" >> "$GITHUB_OUTPUT"
+            echo "Source: Manual dispatch (rollback)"
+            echo "CI Run: ${{ inputs.ci_run_id }}"
+            echo "Commit: ${{ inputs.commit_sha }}"
+          fi
+
+  # =========================================================================
+  # Stage 1: Development
+  # =========================================================================
+  deploy-dev:
+    name: Development
+    needs: resolve
+    uses: ./.github/workflows/reusable-app-deploy.yml
+    with:
+      environment: development
+      artifactRunId: ${{ needs.resolve.outputs.artifact-run-id }}
+      commitSha: ${{ needs.resolve.outputs.commit-sha }}
+
+  # =========================================================================
+  # Stage 2: Testing
+  # =========================================================================
+  deploy-test:
+    name: Testing
+    needs: [resolve, deploy-dev]
+    uses: ./.github/workflows/reusable-app-deploy.yml
+    with:
+      environment: testing
+      artifactRunId: ${{ needs.resolve.outputs.artifact-run-id }}
+      commitSha: ${{ needs.resolve.outputs.commit-sha }}
+
+  # =========================================================================
+  # Stage 3: Production (approval-gated)
+  # =========================================================================
+  deploy-prod:
+    name: Production
+    needs: [resolve, deploy-test]
+    uses: ./.github/workflows/reusable-app-deploy.yml
+    with:
+      environment: production
+      artifactRunId: ${{ needs.resolve.outputs.artifact-run-id }}
+      commitSha: ${{ needs.resolve.outputs.commit-sha }}
