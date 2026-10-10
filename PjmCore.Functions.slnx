@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PjmCore.Functions/PjmCore.Functions.csproj" />
+  </Folder>
+</Solution>

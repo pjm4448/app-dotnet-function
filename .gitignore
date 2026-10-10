@@ -7,8 +7,7 @@ publish/
 *.user
 *.suo
 .vs/
-.vscode/launch.json
-.vscode/tasks.json
+.vscode/
 local.settings.json
 
 # Environment and secret files
