@@ -20,7 +20,8 @@ public class StorageHealthCheck : IHealthCheck
     {
         try
         {
-            await _blobServiceClient.GetPropertiesAsync(cancellationToken);
+            var containerClient = _blobServiceClient.GetBlobContainerClient(ContainerName);
+            await containerClient.GetPropertiesAsync(cancellationToken: cancellationToken);
             return HealthCheckResult.Healthy("Storage account is accessible.");
         }
         catch (Exception ex)
