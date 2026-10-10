@@ -30,7 +30,7 @@ permissions:
 jobs:
   deploy:
     name: Deploy — ${{ inputs.environment }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: ${{ inputs.environment }}
     concurrency:
       group: app-${{ inputs.environment }}
@@ -41,7 +41,7 @@ jobs:
       # Download artifact from the CI workflow run
       # ------------------------------------------------------------------
       - name: Download deployment package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: deployment-package
           run-id: ${{ inputs.artifactRunId }}
@@ -61,7 +61,7 @@ jobs:
       # Authenticate to Azure
       # ------------------------------------------------------------------
       - name: Authenticate to Azure (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
