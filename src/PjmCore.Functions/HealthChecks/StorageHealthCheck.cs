@@ -5,6 +5,8 @@ namespace PjmCore.Functions.HealthChecks;
 
 public class StorageHealthCheck : IHealthCheck
 {
+    public const string ContainerName = "deploymentpackage";
+
     private readonly BlobServiceClient _blobServiceClient;
 
     public StorageHealthCheck(BlobServiceClient blobServiceClient)
