@@ -15,6 +15,8 @@ on:
       - "tests/**"
       - "*.sln"
       - ".github/workflows/app-ci.yml"
+      - ".github/workflows/app-cd.yml"
+      - ".github/workflows/reusable-app-deploy.yml"
   push:
     branches: [main]
     paths:
@@ -22,6 +24,8 @@ on:
       - "tests/**"
       - "*.sln"
       - ".github/workflows/app-ci.yml"
+      - ".github/workflows/app-cd.yml"
+      - ".github/workflows/reusable-app-deploy.yml"
 
 # Cancel in-progress runs when a new commit is pushed to the same PR or ref.
 concurrency:
