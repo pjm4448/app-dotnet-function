@@ -1,0 +1,106 @@
+# ---------------------------------------------------------------------------
+# Workflow: Application CI
+# Builds, tests, and packages the .NET 10 Isolated Worker Function App.
+# On PR: validates build and tests.
+# On push to main: produces the immutable deployment package.
+# ---------------------------------------------------------------------------
+
+name: Application CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "*.sln"
+      - ".github/workflows/app-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "*.sln"
+      - ".github/workflows/app-ci.yml"
+
+# Cancel in-progress runs when a new commit is pushed to the same PR or ref.
+concurrency:
+  group: app-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+
+  build-test-package:
+    name: Build, Test & Package
+    runs-on: ubuntu-latest
+
+    steps:
+      # ------------------------------------------------------------------
+      # Setup
+      # ------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.x"
+          dotnet-quality: "preview"
+
+      # ------------------------------------------------------------------
+      # Build (with commit SHA embedded in assembly metadata)
+      # ------------------------------------------------------------------
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build solution
+        run: dotnet build --configuration Release --no-restore /p:SourceRevisionId=${{ github.sha }}
+
+      # ------------------------------------------------------------------
+      # Test (using already-compiled binaries)
+      # ------------------------------------------------------------------
+      - name: Run unit tests
+        run: |
+          dotnet test \
+            --configuration Release \
+            --no-build \
+            --logger "trx;LogFileName=results.trx" \
+            --results-directory ./TestResults
+
+      - name: Report test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Test Results
+          path: TestResults/**/*.trx
+          reporter: dotnet-trx
+
+      # ------------------------------------------------------------------
+      # Package (only on push to main — produces the deployment artifact)
+      # ------------------------------------------------------------------
+      - name: Publish application
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          dotnet publish src/PjmCore.Functions/PjmCore.Functions.csproj \
+            --configuration Release \
+            --no-build \
+            --output ./publish
+
+      - name: Create deployment package
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          cd publish
+          zip -r ../pjmcore-func-${{ github.sha }}.zip .
+
+      - name: Upload deployment package
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-package
+          path: pjmcore-func-${{ github.sha }}.zip
+          retention-days: 30
+          if-no-files-found: error

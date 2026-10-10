@@ -2,4 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/PjmCore.Functions/PjmCore.Functions.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PjmCore.Functions.Tests/PjmCore.Functions.Tests.csproj" />
+  </Folder>
 </Solution>
