@@ -47,4 +47,24 @@ public class StorageHealthCheckTests
         Assert.Equal("Storage account is not accessible.", result.Description);
         Assert.IsType<RequestFailedException>(result.Exception);
     }
+
+    [Fact]
+    public async Task CheckHealthAsync_IncludesExceptionDetails_WhenUnhealthy()
+    {
+        // Arrange
+        var expectedMessage = "The specified resource does not exist.";
+        var mockClient = new Mock<BlobServiceClient>();
+        mockClient
+            .Setup(c => c.GetPropertiesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new RequestFailedException(expectedMessage));
+
+        var healthCheck = new StorageHealthCheck(mockClient.Object);
+
+        // Act
+        var result = await healthCheck.CheckHealthAsync(new HealthCheckContext());
+
+        // Assert
+        Assert.NotNull(result.Exception);
+        Assert.Contains(expectedMessage, result.Exception!.Message);
+    }
 }
