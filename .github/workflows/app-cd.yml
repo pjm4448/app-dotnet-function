@@ -42,7 +42,7 @@ jobs:
   # =========================================================================
   resolve:
     name: Resolve Deployment Source
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'repository_dispatch' ||
